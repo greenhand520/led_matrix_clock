@@ -6,6 +6,7 @@
 #include "../../src/display/framebuffer.h"
 #include "../../src/rtc/datetime.h"
 #include "../../src/display/tm1640_map.h"
+#include "../../src/ui/anim_digit.h"
 #include "../../src/ui/page_time.h"
 
 void setUp() {}
@@ -18,7 +19,8 @@ const DateTime kT = {2026, 10, 13, 12, 45, 07, 1};
 
 void renderTo(FrameBuffer& fb, const DateTime& t, const Config& cfg) {
   fb.clear();
-  page_time::render(fb, t, cfg);
+  DigitAnimator anim;
+  page_time::render(fb, t, cfg, anim);
 }
 
 }  // namespace
