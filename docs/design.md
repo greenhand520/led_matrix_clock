@@ -1,10 +1,10 @@
-# 设计文档 v0.1（待确认）
+# 设计文档 v1.0（定稿）
 
 | 项 | 内容 |
 |---|---|
-| 依据 | [需求基线 requirements.md](requirements.md) v1.1；[硬件设计](hardware-design.md) |
+| 依据 | [需求基线 requirements.md](requirements.md) v1.4；[硬件设计](hardware-design.md) |
 | 实现 | PlatformIO + Arduino（espressif8266），全新实现（参考代码仅功能参考） |
-| 状态 | v0.1 待确认；确认后按 §14 阶段实施，每阶段一次提交 |
+| 状态 | v1.0 定稿（2026-10-14）：P1–P8 已全部实施（§14），单测/编译通过，硬件统一联调待进行 |
 
 ---
 
@@ -42,11 +42,11 @@ graph TD
 | refresh | 50ms | `Renderer::flush()` 整屏刷新 |
 | clockTick | 1s | 读 RTC→推进显示时间、触发数字滚动、冒号相位 |
 | envSample | 3s | 启动 DHT11 采样事务 |
-| pageSwitch | 15s | TIME↔ENV 轮换 |
+| pageRotate | 1s | TIME↔ENV 轮换计时判定（`page_switch_s`，短按重置计时） |
 | dateScroll | 30min | 触发日期水平滚动动画（~7s 周期） |
 | brightnessTick | 1s | A0 采样→8 档映射→TM1640 |
-| netTick | 每圈 | WiFiManager `process()`、STA 重连状态机 |
-| ntpSync | 开机 + 6h | NTP 对时→写 RTC |
+| netTask | 1s | WiFiManager `process()`、STA 重连、Web 服务启停、SNTP→写 RTC |
+| webTick | 每圈 | Web 配置请求处理（`handleClient`） |
 
 ## 3. 显示子系统
 
@@ -93,20 +93,30 @@ mirror_v: `y→7-y`），渲染层坐标恒定，`flush()` 只做转置与下发
 换 MAX7219 等芯片时只新增后端实现，8×8 模块拓扑与渲染/页面层不动。
 
 ```cpp
+// 渲染（纯逻辑，native 可单测）：设备无关
 enum class Color : uint8_t { OFF, RED, GREEN, ORANGE };   // ORANGE = 双色同亮
 
-class Renderer {
+class FrameBuffer {
  public:
-  void begin();                                   // 清屏 + 上电自检图案
   void clear(Color c = Color::OFF);
-  void setPixel(int16_t x, int16_t y, Color c);   // 越界丢弃
-  void drawChar(char ch, int16_t x, int16_t y, Color c, Font f);
-  void drawText(const char* s, int16_t x, int16_t y, Color c, Font f);
-  void flush();                                   // 帧缓冲 → TM1640，≤50ms
- private:
-  uint8_t red_[4][8];                             // [模块][行]，bit=列
-  uint8_t green_[4][8];
+  void setPixel(int16_t x, int16_t y, Color c);   // 方向变换 + 越界裁剪
+  void drawChar(char ch, int16_t x, int16_t y, Color c, FontKind f);
+  void drawText(const char* s, int16_t x, int16_t y, Color c, FontKind f);
+  uint8_t rowBits(Plane p, uint8_t module, uint8_t row) const;  // 后端读取
+  uint8_t rowBitsLit(uint8_t module, uint8_t row) const;        // 单色合并
 };
+
+// 显示后端接口（换芯片只实现它；单色后端忽略颜色平面）
+class DisplayDevice {
+ public:
+  virtual void begin(uint8_t brightness) = 0;
+  virtual void writeFrame(const FrameBuffer& fb) = 0;
+  virtual void setBrightness(uint8_t level) = 0;
+  virtual void setDisplayOn(bool on) = 0;
+};
+
+// 门面：绑定后端；自检、刷新
+class Display { explicit Display(DisplayDevice& dev); void flush(const FrameBuffer&); ... };
 ```
 
 ### 3.5 字库
@@ -126,39 +136,52 @@ class Renderer {
 | 冒号闪烁 | 1Hz 相位（亮 500/灭 500），`colon_blink=0` 时常亮 |
 | 页面切换 | 直切 + 重置 15s 计时（淡入为可选项） |
 
-## 4. 时间服务（`time`）
+## 4. 时间（`rtc` + `net` 协作）
+
+实现落点：`rtc/ds1302`（驱动 + 校验）与 `net/net_service`（SNTP 时间源）；
+主程序负责「SNTP → 写 RTC」节拍（开机一次 + `ntp_interval_h` 周期，R-RTC-07）。
 
 ```cpp
+// rtc/datetime.h（纯逻辑）：时间结构 + 校验 + 24h→12h
 struct DateTime { uint16_t year; uint8_t mon, day, hour, min, sec, wday; };
+bool validDateTime(const DateTime& t);   // 越界拒绝（R-RTC-06）
+uint8_t to12h(uint8_t hour24, bool* pm);
 
-class TimeService {
- public:
-  bool now(DateTime& out);      // 读 DS1302 + 边界校验（越界拒绝，保持上次有效值）
-  bool syncFromNtp();           // NTP → DateTime → 写 DS1302
-  void tick();                  // 6h 周期对时调度
-};
+// rtc/ds1302：三线驱动（CE=4 / SCLK=2 / IO=16）
+bool readTime(DateTime& out);            // 读 + 校验，失败保持上次值
+bool writeTime(const DateTime& t);       // 写保护、秒寄存器 CH 位处理
+
+// net/net_service：SNTP 时间源（configTime 注入时区）
+bool now(DateTime& out) const;           // 未同步返回 false
 ```
 
-- NTP 用 Arduino core 内置 SNTP（`configTime` + 时区偏移），不手写 UDP（待确认 #2）。
+- NTP 用 Arduino core 内置 SNTP（`configTime`），不手写 UDP（原待确认 #2，已定）。
 - 时区：`tz_offset_min`（默认 480），不做夏令时。
-- DS1302 驱动（`rtc/ds1302`）：CE/SCLK/I-O 位带三线协议，BCD 编解码，
-  I/O 方向切换（OUTPUT 写 / INPUT 释放），寄存器含秒寄存器 CH 位处理。
 
-## 5. 传感器服务（`env`）
+## 5. 传感器服务（`sensor` + `ui/comfort`）
 
 ```cpp
-class Dht11 {
- public:
-  void tick();                  // 非阻塞状态机：START_LOW(18ms)→响应→读 40bit→校验
-  bool valid() const;
-  uint8_t temperature() const;  // ℃，整数
-  uint8_t humidity() const;     // %RH，整数
-};
-Color comfortColor(uint8_t v, bool isTemp);   // R-ENV-05 查表
+// sensor/dht_decode.h（纯逻辑）：帧解码 + 型号判别
+enum class DhtType { UNKNOWN, DHT11, DHT22 };
+bool dhtChecksumOk(const uint8_t raw[5]);
+bool dhtFrameLooksDht22(const uint8_t raw[5]);               // 粘滞判别线索
+bool dhtDecodeFrame(const uint8_t raw[5], DhtType type, DhtReading& out);
+
+// sensor/dht：采样状态机（18ms 起始 + ~4ms 关中断读取突发）
+bool startSample(uint32_t nowMs);
+void tick(uint32_t nowMs);
+int16_t temperatureTenths() const;   // 0.1℃（DHT11 恒 .0，DHT22 有效）
+uint8_t humidity() const;            // %
+
+// ui/comfort.h（纯逻辑）：R-ENV-05 查表
+Color comfortColorTemp(int16_t tenths);
+Color comfortColorHum(uint8_t percent);
 ```
 
-- 失败处理：保留上次有效值；连续 3 次失败显示 `--`（R-ENV-03）。
-- 舒适度表（硬编码常量，可后移配置）：温度绿 18–26 / 橙 12–17、27–30 / 红其余；
+- **DHT11/DHT22 自动判别**：两型号帧格式相同但解码公式不同（DHT11 `int×10+dec`，
+  DHT22 `(h<<8|l)`），小数字节非零/越出 DHT11 量程 → 锁定 DHT22；连续 4 帧全零小数 → DHT11。
+- 失败处理：校验/超时保留上次值；从未成功过显示 `--`（R-ENV-03）。
+- 舒适度表（硬编码常量）：温度绿 18–26 / 橙 12–17、27–30 / 红其余；
   湿度绿 40–70 / 橙 30–39、71–80 / 红其余。
 
 ## 6. 网络服务（`net`）
@@ -166,15 +189,26 @@ Color comfortColor(uint8_t v, bool isTemp);   // R-ENV-05 查表
 ```cpp
 class NetService {
  public:
-  void begin();        // STA 自动连接已存凭据
-  void tick();         // WiFiManager process() + 断线重连状态机
-  void startPortal();  // SoftAP 配网页（长按 2s / 无凭据自动进入），180s 超时
+  void begin(int16_t tzOffsetMin, const char* ntpServer);  // STA + configTime
+  void tick();                 // WiFiManager process() + 断线重连状态机
+  void startPortal();          // SoftAP 配网页（长按 2s / 无凭据自动进入），180s 超时
   bool connected() const;
+  bool now(DateTime& out) const;   // SNTP 时间源
+};
+
+// net/web_config：Web 配置服务（P8 / R-WEB）
+class WebConfig {
+ public:
+  void begin(ConfigStore& store);  // 80 端口常驻（STA 连接后）
+  void stop();                     // 配网时让位 WiFiManager
+  void tick();                     // handleClient
 };
 ```
 
-- 库：`tzapu/WiFiManager`（^2.0，锁定版本），非阻塞 `process()` 模式。
-- 配网成功：保存凭据（SDK flash）→ 重启进 STA；超时退出继续走时（显示 `RTC!` 语义）。
+- 库：`tzapu/WiFiManager`（lib_deps 锁定 ^2.0.17），非阻塞 `process()` 模式。
+- 配网成功：保存凭据（SDK flash）→ 重启进 STA；超时退出继续走时（提示 `RTC!`）。
+- Web 配置（R-WEB）：13 项中文表单 + 恢复出厂；保存经 `config::fromJson` 校验/越界收敛；
+  与配网页互斥 80 端口（配网期间本服务停止）。
 - 状态提示沿用参考文案：`Wi-Fi`（连接中）/`OK!!`/`Err!`/`Setup`/`RTC!`，顶层覆盖层。
 
 ## 7. 配置服务（`config`）
@@ -272,7 +306,7 @@ stateDiagram-v2
 - **硬件联调（对照需求验收 §7）**：上电时序（逻辑分析仪验 TM1640 Start/Data/End
   与 RCLK 窗口）、走时精度、对时、配网、按键三档、亮度跟随、24h 稳定性。
 
-## 14. 开发阶段与提交计划
+## 14. 开发阶段与提交计划（P1–P8 已全部实施）
 
 | 阶段 | 内容 | 验收 |
 |---|---|---|
@@ -296,12 +330,12 @@ stateDiagram-v2
 代码注释一律中文；示例：`Implement display driver and renderer` +
 `- Bit-bang 74HCT595 frame protocol and TM1640 Start/Data/End timing` …
 
-## 15. 待确认点
+## 15. 决议与遗留点
 
-| # | 问题 | 建议 |
+| # | 问题 | 结论 |
 |---|---|---|
-| 1 | 字库来源：自制 vs 开源（Adafruit glcdfont，BSD-3） | 已定：glcdfont（5×8，其他字符）+ 自制取模数字（大 4×7/小 3×5，七段数码管样式，见 ui-layout.md §1） |
-| 2 | NTP 实现：内置 SNTP（`configTime`）vs 手写 UDP | 内置 SNTP，少 100 行自维护代码 |
-| 3 | WiFiManager 版本锁定（tzapu/WiFiManager ^2.0） | 锁定进 `platformio.ini` lib_deps |
-| 4 | 双色接线映射：GRID1–8=红列 / GRID9–16=绿列 | 驱动层常量，随实物接线确认 |
-| 5 | UI 像素布局稿：先出图（32×8 各元素坐标/字号）再写 P3，还是并入 P3 | 已定：先出稿——[ui-layout.md](ui-layout.md) v0.2，P3 照稿实现 |
+| 1 | 字库来源：自制 vs 开源 | 已定：glcdfont 5×8（英文/日期，BSD-3）+ 自制取模数字/符号（大 4×7、小 3×5，七段样式，`tools/gen_font.py` 生成） |
+| 2 | NTP 实现：内置 SNTP vs 手写 UDP | 已定：内置 SNTP（`configTime`） |
+| 3 | WiFiManager 版本锁定 | 已定：`platformio.ini` lib_deps 锁 ^2.0.17 |
+| 4 | 双色接线映射：GRID1–8=红列 / GRID9–16=绿列 | **遗留（硬件联调确认）**：现按此映射，驱动层常量随实物接线可调 |
+| 5 | UI 像素布局稿流程 | 已定：[ui-layout.md](ui-layout.md) v1.0 定稿，已按稿实现（`ui_layout.h` + 字模生成器） |
