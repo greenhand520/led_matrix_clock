@@ -93,7 +93,7 @@ pio run -e esp12e_fonttest -t upload   # 显示验收固件（硬件联调用）
 - **字模**：`tools/gen_font.py` 生成 `font_data.cpp`（勿手改）；英文/日期用 glcdfont（BSD-3）
 - **测试**：纯逻辑（渲染转置/方向/双色、BCD、DHT 解码与判别、舒适度边界、动画合成、
   配置校验、按键/亮度状态机）全部主机侧单测；硬件项联调清单见设计文档 §13
-- **提交规范**：英文 summary + description；代码注释中文
+- **提交规范**：英文 summary + description
 - 当前状态：P1–P8 全部实施，单测与双固件编译通过；**硬件统一联调待进行**
 
 ## 文档
