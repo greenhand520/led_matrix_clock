@@ -105,9 +105,10 @@ class Renderer {
 
 ### 3.5 字库
 
-自备 ASCII 0x20–0x7F 两套：大字（数字用，字宽 7）与小字（秒/标签用，字宽 5），
-格式 `{字宽, 列数据×8}`。**不使用参考代码字模**；候选：Adafruit GFX `glcdfont`
-（BSD-3，来源干净）或自制点阵（待确认 #1）。
+字库三部分（布局稿 §1）：**大数字 4×7**（TIME 时/分，七段数码管样式，自制取模）、
+**小数字 3×5**（TIME 秒、ENV 数值，七段样式，自制取模）；**其余字符** ASCII 0x20–0x7F
+用开源 glcdfont 5×8（BSD-3，来源干净）；另需 3×5 小字母 `A`/`P`（12h 标识，自制）。
+数据格式 `{字宽, 行数据}`。**不使用参考代码字模**。
 
 ### 3.6 动画模型
 
@@ -291,8 +292,8 @@ stateDiagram-v2
 
 | # | 问题 | 建议 |
 |---|---|---|
-| 1 | 字库来源：自制 vs 开源（Adafruit glcdfont，BSD-3） | 用开源字库，许可干净、字形质量好 |
+| 1 | 字库来源：自制 vs 开源（Adafruit glcdfont，BSD-3） | 已定：glcdfont（5×8，其他字符）+ 自制取模数字（大 4×7/小 3×5，七段数码管样式，见 ui-layout.md §1） |
 | 2 | NTP 实现：内置 SNTP（`configTime`）vs 手写 UDP | 内置 SNTP，少 100 行自维护代码 |
 | 3 | WiFiManager 版本锁定（tzapu/WiFiManager ^2.0） | 锁定进 `platformio.ini` lib_deps |
 | 4 | 双色接线映射：GRID1–8=红列 / GRID9–16=绿列 | 驱动层常量，随实物接线确认 |
-| 5 | UI 像素布局稿：先出图（32×8 各元素坐标/字号）再写 P3，还是并入 P3 | 已定：先出稿——[ui-layout.md](ui-layout.md) v0.1 已出，P3 照稿实现 |
+| 5 | UI 像素布局稿：先出图（32×8 各元素坐标/字号）再写 P3，还是并入 P3 | 已定：先出稿——[ui-layout.md](ui-layout.md) v0.2，P3 照稿实现 |
