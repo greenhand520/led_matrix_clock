@@ -3,8 +3,7 @@
 ESP8266 + 4 块共阳双色 8×8 点阵（TM1640×4）的桌面时钟：大字时间 + 温湿度轮显，
 DS1302 掉电走时，WiFi/NTP 自动对时，光敏自动亮度，按键与网页配置。
 
-实现框架：**PlatformIO + Arduino**（espressif8266），全新实现；
-开源项目 [`MatrixClockV1.2.ino`](MatrixClockV1.2.ino) 仅作**功能参考**（不移植代码）。
+实现框架：**PlatformIO + Arduino**（espressif8266）
 
 ## 功能
 
@@ -110,5 +109,4 @@ pio run -e esp12e_fonttest -t upload   # 显示验收固件（硬件联调用）
 
 - 本仓库代码：GPL-3.0（见 [LICENSE](LICENSE)）
 - glcdfont 字库：Adafruit GFX（BSD-3，版权头保留于 `software/led_matrix_clock/src/display/glcdfont.c`）
-- 功能参考：[MatrixClockV1.2.ino（立创开源广场）](https://oshwhub.com/Flight666/ESP8266-ju-zhen-shi-zhong)——
-  仅参考其功能行为，未复制代码与字模
+- 功能参考：[MatrixClockV1.2.ino（立创开源广场）](https://oshwhub.com/Flight666/ESP8266-ju-zhen-shi-zhong)——仅参考其功能行为，未复制代码与字模
