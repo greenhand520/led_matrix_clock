@@ -11,10 +11,12 @@
 
 #include "display/display.h"
 #include "display/font_data.h"
+#include "display/tm1640.h"
 
 namespace {
 
-Display g_display;
+Tm1640Chain g_bus;
+Display g_display(g_bus);
 FrameBuffer g_fb;
 
 constexpr uint32_t kStepMs = 1000;

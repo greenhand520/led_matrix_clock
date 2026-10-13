@@ -5,6 +5,7 @@
 #include "../../src/config/config_schema.h"
 #include "../../src/display/framebuffer.h"
 #include "../../src/rtc/datetime.h"
+#include "../../src/display/tm1640_map.h"
 #include "../../src/ui/page_time.h"
 
 void setUp() {}
@@ -28,7 +29,7 @@ static void test_render_24h_layout() {
   FrameBuffer fb;
   renderTo(fb, kT, cfg);
   uint8_t ram[FrameBuffer::kModules][16];
-  fb.composeToRam(ram);
+  composeTm1640Ram(fb, ram);
   TEST_ASSERT_EQUAL_HEX8(0x36, ram[0][3]);       // H1 '1' 竖列（行1/2/4/5）
   TEST_ASSERT_EQUAL_HEX8(0x00, ram[0][0]);       // H1 为 '1'，列0 无像素
   TEST_ASSERT_EQUAL_HEX8(0x6C, ram[3][8 + 0]);   // S1 '0'（绿，列0 行2/3/5/6）
@@ -41,19 +42,19 @@ static void test_colon_blink() {
   FrameBuffer fb;
   renderTo(fb, kT, cfg);  // sec=7 奇数
   uint8_t ram[FrameBuffer::kModules][16];
-  fb.composeToRam(ram);
+  composeTm1640Ram(fb, ram);
   TEST_ASSERT_EQUAL_HEX8(0x00, ram[1][2]);
 
   cfg.colon_blink = 0;
   renderTo(fb, kT, cfg);
-  fb.composeToRam(ram);
+  composeTm1640Ram(fb, ram);
   TEST_ASSERT_EQUAL_HEX8(0x14, ram[1][2]);  // y=2 与 y=4 两点
 
   DateTime t2 = kT;
   t2.sec = 6;
   cfg.colon_blink = 1;
   renderTo(fb, t2, cfg);
-  fb.composeToRam(ram);
+  composeTm1640Ram(fb, ram);
   TEST_ASSERT_EQUAL_HEX8(0x14, ram[1][2]);  // sec 偶数亮
 }
 
@@ -66,7 +67,7 @@ static void test_12h_leading_zero_and_am_chip() {
   FrameBuffer fb;
   renderTo(fb, t, cfg);
   uint8_t ram[FrameBuffer::kModules][16];
-  fb.composeToRam(ram);
+  composeTm1640Ram(fb, ram);
   TEST_ASSERT_EQUAL_HEX8(0x00, ram[0][0]);  // H1 '0' 未画
   TEST_ASSERT_EQUAL_HEX8(0x00, ram[0][1]);
   TEST_ASSERT_EQUAL_HEX8(0x00, ram[0][2]);
@@ -85,7 +86,7 @@ static void test_12h_pm_chip_orange() {
   FrameBuffer fb;
   renderTo(fb, t, cfg);
   uint8_t ram[FrameBuffer::kModules][16];
-  fb.composeToRam(ram);
+  composeTm1640Ram(fb, ram);
   TEST_ASSERT_EQUAL_HEX8(0x00, ram[0][3]);
   TEST_ASSERT_EQUAL_HEX8(0x03, ram[3][4] & 0x03);   // 红平面
   TEST_ASSERT_EQUAL_HEX8(0x03, ram[3][8 + 4] & 0x03);  // 绿平面
@@ -99,7 +100,7 @@ static void test_24h_leading_zero_lit() {
   FrameBuffer fb;
   renderTo(fb, t, cfg);
   uint8_t ram[FrameBuffer::kModules][16];
-  fb.composeToRam(ram);
+  composeTm1640Ram(fb, ram);
   TEST_ASSERT_EQUAL_HEX8(0x77, ram[0][0]);  // H1 '0' 列0 行0/1/2/4/5/6
 }
 

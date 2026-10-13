@@ -6,6 +6,7 @@
 #include "app/scheduler.h"
 #include "config/config_store.h"
 #include "display/display.h"
+#include "display/tm1640.h"
 #include "rtc/ds1302.h"
 #include "ui/page_time.h"
 
@@ -13,7 +14,8 @@ namespace {
 
 Scheduler g_scheduler;
 ConfigStore g_config;
-Display g_display;
+Tm1640Chain g_bus;  // 显示后端：换芯片时替换此实现
+Display g_display(g_bus);
 FrameBuffer g_framebuffer;
 Ds1302 g_rtc;
 

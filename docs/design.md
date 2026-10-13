@@ -86,6 +86,12 @@ mirror_v: `y→7-y`），渲染层坐标恒定，`flush()` 只做转置与下发
 
 ### 3.4 渲染层 API（`display/render`）
 
+换芯片约束（R-DRV-07）：渲染层只暴露设备无关读取——`rowBits(平面, 模块, 行)` 行位图
+与 `rowBitsLit()`（红|绿合并，单色后端忽略颜色用）；TM1640 GRID/SEG 显存映射下沉到
+驱动侧 `display/tm1640_map.h`（纯函数，可单测）；后端统一实现 `DisplayDevice` 接口
+（`display/display_device.h`：begin/writeFrame/setBrightness/setDisplayOn）。
+换 MAX7219 等芯片时只新增后端实现，8×8 模块拓扑与渲染/页面层不动。
+
 ```cpp
 enum class Color : uint8_t { OFF, RED, GREEN, ORANGE };   // ORANGE = 双色同亮
 

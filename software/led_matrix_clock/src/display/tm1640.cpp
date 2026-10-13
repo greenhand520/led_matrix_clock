@@ -3,6 +3,8 @@
 
 #include <Arduino.h>
 
+#include "display/tm1640_map.h"
+
 namespace {
 constexpr uint8_t kPinSer = 13;    // 595 SER（硬件设计引脚表）
 constexpr uint8_t kPinSrclk = 14;  // 595 SRCLK
@@ -93,7 +95,8 @@ void Tm1640Chain::writeByte(uint8_t b) {
   }
 }
 
-void Tm1640Chain::begin() {
+void Tm1640Chain::begin(uint8_t brightness) {
+  level_ = brightness;
   pinMode(kPinSer, OUTPUT);
   pinMode(kPinSrclk, OUTPUT);
   pinMode(kPinRclk, OUTPUT);
@@ -113,6 +116,14 @@ void Tm1640Chain::begin() {
   }
   setBrightness(level_);
   setDisplayOn(true);
+}
+
+void Tm1640Chain::writeFrame(const FrameBuffer& fb) {
+  uint8_t ram[FrameBuffer::kModules][16];
+  composeTm1640Ram(fb, ram);
+  for (uint8_t m = 0; m < FrameBuffer::kModules; ++m) {
+    writeRam(m, ram[m]);
+  }
 }
 
 void Tm1640Chain::writeRam(uint8_t chip, const uint8_t ram[16]) {

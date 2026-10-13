@@ -99,22 +99,10 @@ void FrameBuffer::drawText(const char* s, int16_t x, int16_t y, Color c, FontKin
   }
 }
 
-void FrameBuffer::composeToRam(uint8_t ram[kModules][16]) const {
-  for (uint8_t m = 0; m < kModules; ++m) {
-    for (uint8_t col = 0; col < 8; ++col) {
-      uint8_t r = 0;
-      uint8_t g = 0;
-      for (uint8_t row = 0; row < 8; ++row) {
-        const uint8_t bit = static_cast<uint8_t>(1 << col);
-        if (red_[m][row] & bit) {
-          r |= static_cast<uint8_t>(1 << row);
-        }
-        if (green_[m][row] & bit) {
-          g |= static_cast<uint8_t>(1 << row);
-        }
-      }
-      ram[m][col] = r;       // GRID col+1 = 红列
-      ram[m][8 + col] = g;   // GRID col+9 = 绿列
-    }
-  }
+uint8_t FrameBuffer::rowBits(Plane p, uint8_t module, uint8_t row) const {
+  return (p == Plane::RED) ? red_[module][row] : green_[module][row];
+}
+
+uint8_t FrameBuffer::rowBitsLit(uint8_t module, uint8_t row) const {
+  return static_cast<uint8_t>(red_[module][row] | green_[module][row]);
 }

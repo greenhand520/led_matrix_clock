@@ -5,6 +5,7 @@
 
 #include "../../src/display/framebuffer.h"
 #include "../../src/display/font_data.h"
+#include "../../src/display/tm1640_map.h"
 
 void setUp() {}
 void tearDown() {}
@@ -16,7 +17,7 @@ static void test_compose_mapping() {
   fb.setPixel(7, 7, Color::GREEN);  // 模块0 列7 行7
   fb.setPixel(8, 3, Color::RED);    // 模块1 列0 行3
   uint8_t ram[FrameBuffer::kModules][16];
-  fb.composeToRam(ram);
+  composeTm1640Ram(fb, ram);
   TEST_ASSERT_EQUAL_HEX8(0x01, ram[0][0]);   // 列0 bit0
   TEST_ASSERT_EQUAL_HEX8(0x80, ram[0][15]);  // 绿列7 bit7
   TEST_ASSERT_EQUAL_HEX8(0x08, ram[1][0]);   // 列0 bit3
@@ -29,7 +30,7 @@ static void test_orange_sets_both_planes() {
   fb.clear();
   fb.setPixel(5, 2, Color::ORANGE);
   uint8_t ram[FrameBuffer::kModules][16];
-  fb.composeToRam(ram);
+  composeTm1640Ram(fb, ram);
   TEST_ASSERT_EQUAL_HEX8(0x04, ram[0][5]);
   TEST_ASSERT_EQUAL_HEX8(0x04, ram[0][13]);
 }
@@ -39,7 +40,7 @@ static void test_clear_color() {
   FrameBuffer fb;
   fb.clear(Color::RED);
   uint8_t ram[FrameBuffer::kModules][16];
-  fb.composeToRam(ram);
+  composeTm1640Ram(fb, ram);
   for (int m = 0; m < 4; ++m) {
     for (int i = 0; i < 8; ++i) {
       TEST_ASSERT_EQUAL_HEX8(0xFF, ram[m][i]);
@@ -56,7 +57,7 @@ static void test_rotate_180() {
   fb.setPixel(0, 0, Color::RED);
   fb.setPixel(31, 7, Color::GREEN);
   uint8_t ram[FrameBuffer::kModules][16];
-  fb.composeToRam(ram);
+  composeTm1640Ram(fb, ram);
   TEST_ASSERT_EQUAL_HEX8(0x80, ram[3][7]);  // 红落到 (31,7)：列7 bit7
   TEST_ASSERT_EQUAL_HEX8(0x01, ram[0][8]);  // 绿落到 (0,0)：绿列0 bit0
 }
@@ -68,13 +69,13 @@ static void test_mirror_h_v() {
   fb.setRotate(RotateMode::MIRROR_H);
   fb.setPixel(0, 4, Color::RED);
   uint8_t ram[FrameBuffer::kModules][16];
-  fb.composeToRam(ram);
+  composeTm1640Ram(fb, ram);
   TEST_ASSERT_EQUAL_HEX8(0x10, ram[3][7]);  // (31,4)：列7 bit4
 
   fb.clear();
   fb.setRotate(RotateMode::MIRROR_V);
   fb.setPixel(2, 0, Color::RED);
-  fb.composeToRam(ram);
+  composeTm1640Ram(fb, ram);
   TEST_ASSERT_EQUAL_HEX8(0x80, ram[0][2]);  // (2,7)：列2 bit7
 }
 
@@ -87,7 +88,7 @@ static void test_clip_out_of_bounds() {
   fb.setPixel(0, -1, Color::RED);
   fb.setPixel(0, 8, Color::RED);
   uint8_t ram[FrameBuffer::kModules][16];
-  fb.composeToRam(ram);
+  composeTm1640Ram(fb, ram);
   for (int m = 0; m < 4; ++m) {
     for (int i = 0; i < 16; ++i) {
       TEST_ASSERT_EQUAL_HEX8(0x00, ram[m][i]);
@@ -101,7 +102,7 @@ static void test_big_digit_one() {
   fb.clear();
   fb.drawChar('1', 0, 0, Color::RED, FontKind::BIG);
   uint8_t ram[FrameBuffer::kModules][16];
-  fb.composeToRam(ram);
+  composeTm1640Ram(fb, ram);
   TEST_ASSERT_EQUAL_HEX8(0x36, ram[0][3]);  // 列3 bit1/2/4/5
   TEST_ASSERT_EQUAL_HEX8(0x00, ram[0][0]);
   TEST_ASSERT_EQUAL_HEX8(0x00, ram[0][1]);
@@ -114,7 +115,7 @@ static void test_small_text_pitch() {
   fb.clear();
   fb.drawText("00", 24, 2, Color::GREEN, FontKind::SMALL);
   uint8_t ram[FrameBuffer::kModules][16];
-  fb.composeToRam(ram);
+  composeTm1640Ram(fb, ram);
   TEST_ASSERT_EQUAL_HEX8(0x6C, ram[3][8 + 0]);  // 列0：行2/3/5/6
   TEST_ASSERT_EQUAL_HEX8(0x44, ram[3][8 + 1]);  // 列1：行2/6
   TEST_ASSERT_EQUAL_HEX8(0x6C, ram[3][8 + 2]);
@@ -128,7 +129,7 @@ static void test_glcd_text_pitch() {
   fb.clear();
   fb.drawText("AA", 0, 0, Color::RED, FontKind::GLCD);
   uint8_t ram[FrameBuffer::kModules][16];
-  fb.composeToRam(ram);
+  composeTm1640Ram(fb, ram);
   for (int row = 0; row < 8; ++row) {
     for (int c = 0; c < 5; ++c) {
       const bool a = (ram[c / 8][c % 8] >> row) & 1;
