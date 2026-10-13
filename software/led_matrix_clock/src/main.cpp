@@ -2,12 +2,14 @@
 // 当前阶段 P6：WiFiManager SoftAP 配网 + SNTP 对时写 RTC + 断线重连 + 状态提示覆盖层
 // 完整功能链：显示/时钟/温湿度/按键/亮度/动画 + 网络（P1..P6）
 #include <Arduino.h>
+#include <ESP8266WiFi.h>
 
 #include "app/scheduler.h"
 #include "config/config_store.h"
 #include "display/display.h"
 #include "display/tm1640.h"
 #include "net/net_service.h"
+#include "net/web_config.h"
 #include "rtc/ds1302.h"
 #include "sensor/dht.h"
 #include "ui/anim_digit.h"
@@ -41,6 +43,7 @@ struct AppCtx {
   ConfigStore* store = nullptr;
   const Config* cfg = nullptr;
   NetService net;
+  WebConfig web;  // Web 配置服务（R-WEB）：联网后常驻，配网时让位
   StatusOverlay overlay;
   DateTime now = {};
   bool timeValid = false;
@@ -165,6 +168,16 @@ void netTask(void*) {
   }
   prev = g_app.net.state();
 
+  // Web 配置服务与配网页互斥 80 端口（R-WEB-04）：联网后常驻，配网时让位
+  if (g_app.net.portalActive()) {
+    if (g_app.web.active()) {
+      g_app.web.stop();
+    }
+  } else if (g_app.net.connected() && !g_app.web.active()) {
+    g_app.web.begin(*g_app.store);
+    Serial.printf("[web] config page: http://%s/\n", WiFi.localIP().toString().c_str());
+  }
+
   // SNTP → RTC：首次就绪即写；此后每 ntp_interval_h 后台校时（R-RTC-07）
   DateTime t;
   if (g_app.net.now(t)) {
@@ -277,5 +290,6 @@ void loop() {
   // 所有周期任务经调度器截止时间驱动，禁止 delay()（设计文档 §2）
   g_scheduler.tick(millis());
   g_dht.tick(millis());  // 起始低电平到点后触发读取突发（18ms 状态机）
+  g_app.web.tick();      // Web 配置请求处理（非阻塞）
   yield();
 }
