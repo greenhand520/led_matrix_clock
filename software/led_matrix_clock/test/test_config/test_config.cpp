@@ -15,7 +15,7 @@ static void test_defaults_match_requirements() {
   TEST_ASSERT_EQUAL_UINT8(6, cfg.ntp_interval_h);
   TEST_ASSERT_EQUAL_UINT8(24, cfg.hour_format);
   TEST_ASSERT_EQUAL_UINT8(0, cfg.date_order);
-  TEST_ASSERT_EQUAL_UINT8(ROTATE_NORMAL, cfg.rotate_mode);
+  TEST_ASSERT_EQUAL_UINT8(0, cfg.rotate_mode);
   TEST_ASSERT_EQUAL_UINT8(1, cfg.colon_blink);
   TEST_ASSERT_EQUAL_UINT8(0, cfg.brightness_mode);
   TEST_ASSERT_EQUAL_UINT8(5, cfg.brightness_level);
@@ -33,7 +33,7 @@ static void test_json_roundtrip() {
   src.ntp_interval_h = 12;
   src.hour_format = 12;
   src.date_order = 2;
-  src.rotate_mode = ROTATE_MIRROR_V;
+  src.rotate_mode = 3;  // RotateMode::MIRROR_V 的持久化数值
   src.colon_blink = 0;
   src.brightness_mode = 1;
   src.brightness_level = 7;

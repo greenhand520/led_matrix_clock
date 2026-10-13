@@ -119,8 +119,9 @@ tSETUP/tHOLD≥100ns，tWAIT≥1µs，PWSTB≥1µs。固件半周期取 ≥2µs 
 
 硬性约束：
 
-- **RCLK（595 锁存）只允许在 GPIO15=0 时触发**，即更新 DIN/SEL 必须在 TM1640
-  时钟低电平窗口内，否则 DIN 跳变落在时钟高电平上会被判成 Start/End。
+- **数据相位**：DIN 只在 SCLK 低电平窗口内更新（595 锁存），避免数据位被误判为 Start/End。
+- **Start/End 构造例外**：协议要求 Start/End 的 DIN 跳变发生在 SCLK 高电平（手册 P4），
+  此时的 595 锁存是预期动作；未选中芯片因 SCLK 被与门钳低，不受任何影响。
 - 切换片选：SCLK=0 时先清当前 SEL，再置新 SEL，然后才可开始新的 Start。
 - 未选中芯片 SCLK 被与门钳在低电平，完全不感知 DIN 上的任何跳变。
 

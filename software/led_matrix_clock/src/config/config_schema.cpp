@@ -59,9 +59,7 @@ bool fromJson(Config& cfg, const JsonDocument& doc) {
       clampVal<uint8_t>(doc["ntp_interval_h"] | cfg.ntp_interval_h, 1, 24);
   cfg.hour_format = ((doc["hour_format"] | cfg.hour_format) == 12) ? 12 : 24;
   cfg.date_order = clampVal<uint8_t>(doc["date_order"] | cfg.date_order, 0, 3);
-  cfg.rotate_mode =
-      clampVal<uint8_t>(doc["rotate_mode"] | cfg.rotate_mode, ROTATE_NORMAL,
-                        ROTATE_MIRROR_V);
+  cfg.rotate_mode = clampVal<uint8_t>(doc["rotate_mode"] | cfg.rotate_mode, 0, 3);
   cfg.colon_blink = (doc["colon_blink"] | cfg.colon_blink) ? 1 : 0;
   cfg.brightness_mode = (doc["brightness_mode"] | cfg.brightness_mode) ? 1 : 0;
   cfg.brightness_level =
