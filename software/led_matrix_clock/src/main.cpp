@@ -71,6 +71,8 @@ void refreshTask(void*) {
     g_app.dateScroll.step();
   }
   g_app.fb->clear();
+  // 方向配置实时生效（rotate_mode 0..3 = 正常/180°/水平镜像/垂直镜像）
+  g_app.fb->setRotate(static_cast<RotateMode>(g_app.cfg->rotate_mode & 0x03));
   if (g_app.page == kPageTime) {
     if (g_app.timeValid) {
       page_time::render(*g_app.fb, g_app.now, *g_app.cfg, g_app.anim);
