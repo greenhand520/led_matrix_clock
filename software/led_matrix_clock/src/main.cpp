@@ -1,6 +1,6 @@
 // LED 矩阵时钟 —— 应用入口（产品固件）
-// 当前阶段 P3：PAGE_TIME 时间页接入（DS1302 走时 + 大 4x7 时分 + 冒号 + 小 3x5 秒 + 12h 角标）
-// 温湿度页、传感器、网络任务在后续阶段（P4 起）注册进调度器
+// 当前阶段 P4：TIME↔ENV 每 page_switch_s 轮换；DHT11 采样（env_sample_s）；
+// PAGE_ENV 舒适度着色；网络任务在 P6 接入
 #include <Arduino.h>
 
 #include "app/scheduler.h"
@@ -8,6 +8,8 @@
 #include "display/display.h"
 #include "display/tm1640.h"
 #include "rtc/ds1302.h"
+#include "sensor/dht.h"
+#include "ui/page_env.h"
 #include "ui/page_time.h"
 
 namespace {
@@ -18,29 +20,41 @@ Tm1640Chain g_bus;  // 显示后端：换芯片时替换此实现
 Display g_display(g_bus);
 FrameBuffer g_framebuffer;
 Ds1302 g_rtc;
+Dht g_dht;
+
+constexpr uint8_t kPageTime = 0;
+constexpr uint8_t kPageEnv = 1;
 
 struct AppCtx {
   Display* disp;
   FrameBuffer* fb;
   Ds1302* rtc;
+  Dht* dht;
   const Config* cfg;
   DateTime now;
   bool timeValid;
+  uint8_t page;
 };
 
-AppCtx g_app = {&g_display, &g_framebuffer, &g_rtc, nullptr, {}, false};
+AppCtx g_app = {&g_display, &g_framebuffer, &g_rtc, &g_dht, nullptr, {}, false, kPageTime};
 
-// 整屏刷新任务（50ms，设计文档 §2 节拍表）：清屏 → 渲染当前页 → 下发
+// 整屏刷新任务（50ms）：清屏 → 渲染当前页 → 下发
 void refreshTask(void* ctx) {
   AppCtx* app = static_cast<AppCtx*>(ctx);
   app->fb->clear();
-  if (app->timeValid) {
-    page_time::render(*app->fb, app->now, *app->cfg);
+  if (app->page == kPageTime) {
+    if (app->timeValid) {
+      page_time::render(*app->fb, app->now, *app->cfg);
+    }
+  } else {
+    // 温湿度同组有效性由传感器校验决定；失败显示 "--"（R-ENV-03）
+    const bool ok = app->dht->valid();
+    page_env::render(*app->fb, app->dht->temperatureTenths(), app->dht->humidity(), ok, ok);
   }
   app->disp->flush(*app->fb);
 }
 
-// 时钟推进任务（1s）：读 RTC → 更新显示时间（R-RTC-02）；越界拒绝并保持上次值（R-RTC-06）
+// 时钟推进任务（1s）：读 RTC → 更新显示时间（R-RTC-02）
 void clockTickTask(void* ctx) {
   AppCtx* app = static_cast<AppCtx*>(ctx);
   DateTime t;
@@ -52,12 +66,27 @@ void clockTickTask(void* ctx) {
   }
 }
 
+// 采样任务（cfg.env_sample_s，默认 3s）：启动一次 DHT11 事务
+void envSampleTask(void* ctx) {
+  AppCtx* app = static_cast<AppCtx*>(ctx);
+  if (!app->dht->startSample(millis())) {
+    Serial.println(F("[dht] busy, skip sample"));
+  }
+}
+
+// 页面轮换（cfg.page_switch_s，默认 15s）：TIME ↔ ENV（R-UI-08）
+void pageSwitchTask(void* ctx) {
+  AppCtx* app = static_cast<AppCtx*>(ctx);
+  app->page = (app->page == kPageTime) ? kPageEnv : kPageTime;
+  Serial.printf("[ui] page -> %s\n", app->page == kPageTime ? "TIME" : "ENV");
+}
+
 }  // namespace
 
 void setup() {
   Serial.begin(115200);
   Serial.println();
-  Serial.println(F("[boot] LED matrix clock, P3 time page"));
+  Serial.println(F("[boot] LED matrix clock, P4 env page"));
 
   // 配置加载：首次启动/损坏/版本不符时回退默认值（需求 R-CFG-01）
   if (g_config.begin()) {
@@ -88,13 +117,20 @@ void setup() {
     Serial.println(F("[rtc] no valid time yet"));
   }
 
+  // 传感器与起始页（default_page）
+  g_dht.begin();
+  g_app.page = (cfg.default_page == PAGE_DEFAULT_ENV) ? kPageEnv : kPageTime;
+
   g_scheduler.add(50, refreshTask, &g_app);
   g_scheduler.add(1000, clockTickTask, &g_app);
-  Serial.println(F("[display] init ok, refresh + clock tasks armed"));
+  g_scheduler.add(static_cast<uint32_t>(cfg.env_sample_s) * 1000, envSampleTask, &g_app);
+  g_scheduler.add(static_cast<uint32_t>(cfg.page_switch_s) * 1000, pageSwitchTask, &g_app);
+  Serial.println(F("[display] init ok, tasks armed"));
 }
 
 void loop() {
   // 所有周期任务经调度器截止时间驱动，禁止 delay()（设计文档 §2）
   g_scheduler.tick(millis());
+  g_dht.tick(millis());  // 起始低电平到点后触发读取突发（18ms 状态机）
   yield();
 }
