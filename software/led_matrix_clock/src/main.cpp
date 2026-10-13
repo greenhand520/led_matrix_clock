@@ -1,18 +1,20 @@
 // LED 矩阵时钟 —— 应用入口（产品固件）
-// 当前阶段 P5：按键（GPIO0 三档）+ 5516 自动亮度 + 数字垂直滚动 + 日期水平滚动
-// 网络任务（配网/NTP）在 P6 接入
+// 当前阶段 P6：WiFiManager SoftAP 配网 + SNTP 对时写 RTC + 断线重连 + 状态提示覆盖层
+// 完整功能链：显示/时钟/温湿度/按键/亮度/动画 + 网络（P1..P6）
 #include <Arduino.h>
 
 #include "app/scheduler.h"
 #include "config/config_store.h"
 #include "display/display.h"
 #include "display/tm1640.h"
+#include "net/net_service.h"
 #include "rtc/ds1302.h"
 #include "sensor/dht.h"
 #include "ui/anim_digit.h"
 #include "ui/brightness.h"
 #include "ui/button.h"
 #include "ui/date_line.h"
+#include "ui/overlay.h"
 #include "ui/page_env.h"
 #include "ui/page_time.h"
 #include "ui/text_scroller.h"
@@ -38,6 +40,8 @@ struct AppCtx {
   Dht* dht = nullptr;
   ConfigStore* store = nullptr;
   const Config* cfg = nullptr;
+  NetService net;
+  StatusOverlay overlay;
   DateTime now = {};
   bool timeValid = false;
   uint8_t page = kPageTime;
@@ -47,7 +51,9 @@ struct AppCtx {
   Button button;
   uint32_t lastPageSwitchMs = 0;
   uint32_t nextDateScrollMs = 0;
+  uint32_t nextNtpWriteMs = 0;
   uint8_t lastBrightness = 0xFF;
+  bool ntpWritten = false;
 };
 
 AppCtx g_app;
@@ -58,7 +64,7 @@ void switchPage(uint32_t nowMs) {
   Serial.printf("[ui] page -> %s\n", g_app.page == kPageTime ? "TIME" : "ENV");
 }
 
-// 整屏刷新任务（50ms）：动画步进 → 清屏 → 渲染当前页 → 日期滚动覆盖 → 下发
+// 整屏刷新任务（50ms）：动画步进 → 清屏 → 页面 → 日期滚动覆盖 → 状态覆盖 → 下发
 void refreshTask(void*) {
   g_app.anim.step();
   if (g_app.dateScroll.running()) {
@@ -73,9 +79,12 @@ void refreshTask(void*) {
     const bool ok = g_app.dht->valid();
     page_env::render(*g_app.fb, g_app.dht->temperatureTenths(), g_app.dht->humidity(), ok, ok);
   }
-  // 层级（布局稿 §5）：日期滚动 > 页面内容
+  // 层级（布局稿 §5）：状态覆盖 > 日期滚动 > 页面内容
   if (g_app.dateScroll.running()) {
     g_app.dateScroll.draw(*g_app.fb, 0, Color::GREEN, FontKind::GLCD);
+  }
+  if (g_app.overlay.active(millis())) {
+    g_app.overlay.draw(*g_app.fb);
   }
   g_app.disp->flush(*g_app.fb);
 }
@@ -120,7 +129,7 @@ void dateScrollTask(void*) {
   Serial.printf("[ui] date scroll: %s\n", text);
 }
 
-// 亮度任务（1s）：自动模式采样 A0（5516 光敏），手动模式只在启动设置（R-BRI）
+// 亮度任务（1s）：自动模式采样 A0（5516 光敏），手动档启动时已设置（R-BRI）
 void brightnessTask(void*) {
   if (g_app.cfg->brightness_mode != 0) {
     return;
@@ -132,6 +141,42 @@ void brightnessTask(void*) {
   }
 }
 
+// 网络任务（1s）：配网推进/重连 + 状态提示 + SNTP → RTC（R-NET）
+void netTask(void*) {
+  static NetState prev = NetState::CONNECTING;
+  const uint32_t now = millis();
+  g_app.net.tick();
+
+  if (g_app.net.consumeConnected()) {
+    g_app.overlay.show("OK!!", now, false);  // 联网成功 2s
+  }
+  if (g_app.net.consumePortalDone()) {
+    Serial.println(F("[net] portal done, restart into STA"));
+    delay(200);
+    ESP.restart();  // 凭据已保存，重启进 STA（R-NET-02）
+  }
+  if (g_app.net.consumePortalTimeout()) {
+    g_app.overlay.show("RTC!", now, false);  // 配网超时 2s
+  }
+  if (g_app.net.state() == NetState::OFFLINE && prev != NetState::OFFLINE) {
+    g_app.overlay.show("Err!", now, false);  // 联网失败 2s，之后按重试节奏再提示
+  }
+  prev = g_app.net.state();
+
+  // SNTP → RTC：首次就绪即写；此后每 ntp_interval_h 后台校时（R-RTC-07）
+  DateTime t;
+  if (g_app.net.now(t)) {
+    const uint32_t intervalMs = static_cast<uint32_t>(g_app.cfg->ntp_interval_h) * 3600000u;
+    if (!g_app.ntpWritten || static_cast<int32_t>(now - g_app.nextNtpWriteMs) >= 0) {
+      if (g_app.rtc->writeTime(t)) {
+        g_app.ntpWritten = true;
+        g_app.nextNtpWriteMs = now + intervalMs;
+        Serial.println(F("[ntp] rtc updated from sntp"));
+      }
+    }
+  }
+}
+
 // 按键任务（10ms）：消抖与长按分级（R-KEY-01）
 void buttonTask(void*) {
   const bool pressed = digitalRead(kPinButton) == LOW;
@@ -139,15 +184,16 @@ void buttonTask(void*) {
     case KeyEvt::SHORT:
       switchPage(millis());  // 立即换页并重置轮换计时
       break;
+    case KeyEvt::LONG_2S:
+      g_app.net.startPortal();  // SoftAP 配网（R-NET-02）
+      g_app.overlay.show("Setup", millis(), true);
+      Serial.println(F("[net] portal started by button"));
+      break;
     case KeyEvt::LONG_5S:
       Serial.println(F("[cfg] factory reset"));
       g_app.store->factoryReset();
-      delay(100);  // 等串口输出完
+      delay(100);
       ESP.restart();
-      break;
-    case KeyEvt::LONG_2S:
-      // 配网触发点（WiFiManager SoftAP）：P6 网络模块接入
-      Serial.println(F("[net] portal trigger (P6)"));
       break;
     default:
       break;
@@ -159,7 +205,7 @@ void buttonTask(void*) {
 void setup() {
   Serial.begin(115200);
   Serial.println();
-  Serial.println(F("[boot] LED matrix clock, P5 input/brightness/anim"));
+  Serial.println(F("[boot] LED matrix clock, P6 network"));
 
   // 配置加载：首次启动/损坏/版本不符时回退默认值（需求 R-CFG-01）
   if (g_config.begin()) {
@@ -194,7 +240,7 @@ void setup() {
     Serial.println(F("[rtc] no valid time yet"));
   }
 
-  // 传感器 / 按键 / 起始页 / 亮度初值
+  // 传感器 / 按键 / 起始页 / 亮度初值 / 时间轴
   g_app.dht = &g_dht;
   g_dht.begin();
   pinMode(kPinButton, INPUT_PULLUP);
@@ -202,8 +248,16 @@ void setup() {
   g_app.lastPageSwitchMs = millis();
   g_app.nextDateScrollMs = millis() + static_cast<uint32_t>(cfg.date_scroll_min) * 60000u;
   if (cfg.brightness_mode != 0) {
-    g_display.setBrightness(cfg.brightness_level);  // 手动档
+    g_display.setBrightness(cfg.brightness_level);
     g_app.lastBrightness = cfg.brightness_level;
+  }
+
+  // 网络：STA 自动连接 / 无凭据进配网；SNTP 后台同步（R-NET）
+  g_app.net.begin(cfg.tz_offset_min, cfg.ntp_server);
+  if (g_app.net.portalActive()) {
+    g_app.overlay.show("Setup", millis(), true);
+  } else {
+    g_app.overlay.show("Wi-Fi", millis(), true);  // 连接中，持续到出结果
   }
 
   g_scheduler.add(50, refreshTask, nullptr);
@@ -212,8 +266,9 @@ void setup() {
   g_scheduler.add(1000, pageRotateTask, nullptr);
   g_scheduler.add(1000, dateScrollTask, nullptr);
   g_scheduler.add(1000, brightnessTask, nullptr);
+  g_scheduler.add(1000, netTask, nullptr);
   g_scheduler.add(10, buttonTask, nullptr);
-  Serial.println(F("[display] init ok, tasks armed"));
+  Serial.println(F("[display] init ok, all tasks armed"));
 }
 
 void loop() {
