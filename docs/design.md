@@ -295,4 +295,4 @@ stateDiagram-v2
 | 2 | NTP 实现：内置 SNTP（`configTime`）vs 手写 UDP | 内置 SNTP，少 100 行自维护代码 |
 | 3 | WiFiManager 版本锁定（tzapu/WiFiManager ^2.0） | 锁定进 `platformio.ini` lib_deps |
 | 4 | 双色接线映射：GRID1–8=红列 / GRID9–16=绿列 | 驱动层常量，随实物接线确认 |
-| 5 | UI 像素布局稿：先出图（32×8 各元素坐标/字号）再写 P3，还是并入 P3 | 建议先出一页布局稿，P3 直接照图实现 |
+| 5 | UI 像素布局稿：先出图（32×8 各元素坐标/字号）再写 P3，还是并入 P3 | 已定：先出稿——[ui-layout.md](ui-layout.md) v0.1 已出，P3 照稿实现 |
